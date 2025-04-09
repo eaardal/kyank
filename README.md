@@ -20,14 +20,14 @@ FOO=foo
 BAR=bar
 ```
 
-Specifying one environment variable:
+Reading one environment variable:
 
 ```
 > kyank --namespace apps --pod-id some-app-123-456 --env ABC
 ABC=aaa
 ```
 
-Specifying many environment variables:
+Reading many environment variables:
 
 ```
 > kyank --namespace apps --pod-id some-app-123-456 --env ABC,DEF,FOO,BAR
