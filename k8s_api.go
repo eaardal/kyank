@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -41,6 +42,14 @@ func (k *k8sApi) getPod(ctx context.Context, podId string) (*corev1.Pod, error) 
 		return nil, fmt.Errorf("failed to get pod %s in namespace %s: %v", podId, k.namespace, err)
 	}
 	return pod, nil
+}
+
+func (k *k8sApi) getDeployment(ctx context.Context, deploymentName string) (*appsv1.Deployment, error) {
+	deploy, err := k.clientset.AppsV1().Deployments(k.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get deployment %s: %w", deploymentName, err)
+	}
+	return deploy, nil
 }
 
 func (k *k8sApi) getSecretValue(ctx context.Context, secretName string, key string) (string, error) {
