@@ -1,4 +1,4 @@
-module kyank
+module github.com/eaardal/kyank
 
 go 1.24
 
