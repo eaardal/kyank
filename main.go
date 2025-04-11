@@ -9,12 +9,29 @@ import (
 	"strings"
 )
 
+type options struct {
+	k8sContextName string
+	namespace      string
+	podId          string
+	deploymentName string
+	envNames       []string
+	prefix         string
+	suffix         string
+	separator      string
+}
+
 func main() {
 	cmd := &cli.Command{
 		Name:        "kyank",
 		Description: "Yank things from Kubernetes",
 		Usage:       "Invoke with the Kubernetes namespace, Pod ID or Deployment name and at least one environment variable to read",
 		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:    "context",
+				Usage:   "Kubernetes context. This is optional, but helps ensure the command is being run against the exact correct kubernetes context",
+				Aliases: []string{"c"},
+				Sources: cli.EnvVars("KYANK_K8S_CONTEXT"),
+			},
 			&cli.StringFlag{
 				Name:     "namespace",
 				Usage:    "Kubernetes namespace",
@@ -41,8 +58,12 @@ func main() {
 			&cli.StringFlag{
 				Name:    "prefix",
 				Usage:   "This text will be prepended to each environment variable line as output. Useful if you want to add 'export ' before each line.",
-				Aliases: []string{"p"},
 				Sources: cli.EnvVars("KYANK_PREFIX"),
+			},
+			&cli.StringFlag{
+				Name:    "suffix",
+				Usage:   "This text will be appended to each environment variable line as output.",
+				Sources: cli.EnvVars("KYANK_SUFFIX"),
 			},
 			&cli.StringFlag{
 				Name:        "separator",
@@ -54,24 +75,28 @@ func main() {
 			},
 		},
 		Action: func(ctx context.Context, c *cli.Command) error {
-			namespace := c.String("namespace")
-			podId := c.String("pod-id")
-			deploymentName := c.String("deployment")
-			envNames := c.StringSlice("env")
-			prefix := c.String("prefix")
-			separator := c.String("separator")
+			opts := options{
+				k8sContextName: c.String("context"),
+				namespace:      c.String("namespace"),
+				podId:          c.String("pod-id"),
+				deploymentName: c.String("deployment"),
+				envNames:       c.StringSlice("env"),
+				prefix:         c.String("prefix"),
+				suffix:         c.String("suffix"),
+				separator:      c.String("separator"),
+			}
 
-			if podId == "" && deploymentName == "" {
+			if opts.podId == "" && opts.deploymentName == "" {
 				return fmt.Errorf("you must specify a pod id or deployment")
 			}
 
-			api := newK8sApi(namespace)
+			api := newK8sApi(opts.k8sContextName, opts.namespace)
 			if err := api.init(); err != nil {
 				return err
 			}
 
-			if podId != "" {
-				lines, err := lookupPodEnvironmentVariables(ctx, podId, envNames, prefix, separator, api)
+			if opts.podId != "" {
+				lines, err := lookupPodEnvironmentVariables(ctx, opts, api)
 				if err != nil {
 					return err
 				}
@@ -80,8 +105,8 @@ func main() {
 				return nil
 			}
 
-			if deploymentName != "" {
-				lines, err := lookupDeploymentEnvironmentVariables(ctx, deploymentName, envNames, prefix, separator, api)
+			if opts.deploymentName != "" {
+				lines, err := lookupDeploymentEnvironmentVariables(ctx, opts, api)
 				if err != nil {
 					return err
 				}
@@ -99,36 +124,37 @@ func main() {
 	}
 }
 
-func lookupPodEnvironmentVariables(ctx context.Context, podId string, envsToLookup []string, prefix string, separator string, api *k8sApi) ([]string, error) {
-	pod, err := api.getPod(ctx, podId)
+func lookupPodEnvironmentVariables(ctx context.Context, opts options, api *k8sApi) ([]string, error) {
+	pod, err := api.getPod(ctx, opts.podId)
 	if err != nil {
 		return nil, err
 	}
 
-	return extractAndFormatContainerEnvironmentVariables(ctx, pod.Spec.Containers, envsToLookup, prefix, separator, api)
+	return extractAndFormatContainerEnvironmentVariables(ctx, pod.Spec.Containers, opts, api)
 }
 
-func lookupDeploymentEnvironmentVariables(ctx context.Context, deployment string, envsToLookup []string, prefix string, separator string, api *k8sApi) ([]string, error) {
-	depl, err := api.getDeployment(ctx, deployment)
+func lookupDeploymentEnvironmentVariables(ctx context.Context, opts options, api *k8sApi) ([]string, error) {
+	depl, err := api.getDeployment(ctx, opts.deploymentName)
 	if err != nil {
 		return nil, err
 	}
 
-	return extractAndFormatContainerEnvironmentVariables(ctx, depl.Spec.Template.Spec.Containers, envsToLookup, prefix, separator, api)
+	return extractAndFormatContainerEnvironmentVariables(ctx, depl.Spec.Template.Spec.Containers, opts, api)
 }
 
-func extractAndFormatContainerEnvironmentVariables(ctx context.Context, containers []v1.Container, envsToLookup []string, prefix string, separator string, api *k8sApi) ([]string, error) {
+func extractAndFormatContainerEnvironmentVariables(ctx context.Context, containers []v1.Container, opts options, api *k8sApi) ([]string, error) {
 	var lines []string
 
 	for _, container := range containers {
-		envs, err := matchEnvironmentVariables(ctx, container.Env, envsToLookup, api)
+		envs, err := matchEnvironmentVariables(ctx, container.Env, opts.envNames, api)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve environment variables: %v", err)
 		}
 
 		for key, value := range envs {
-			keyValue := fmt.Sprintf("%s%s%s\n", key, separator, value)
-			line := prepend(prefix, keyValue)
+			keyValue := fmt.Sprintf("%s%s%s", key, opts.separator, value)
+			line := prependString(opts.prefix, keyValue)
+			line = appendString(opts.suffix, line)
 			lines = append(lines, line)
 		}
 	}
@@ -136,13 +162,13 @@ func extractAndFormatContainerEnvironmentVariables(ctx context.Context, containe
 	return lines, nil
 }
 
-func matchEnvironmentVariables(ctx context.Context, podEnvs []v1.EnvVar, envsToLookFor []string, api *k8sApi) (map[string]string, error) {
+func matchEnvironmentVariables(ctx context.Context, envVars []v1.EnvVar, envsToLookFor []string, api *k8sApi) (map[string]string, error) {
 	envs := make(map[string]string)
 
-	for _, podEnv := range podEnvs {
+	for _, envVar := range envVars {
 		for _, envToLookup := range envsToLookFor {
-			if podEnv.Name == envToLookup {
-				value, err := resolvePlainTextOrSecretEnvValue(ctx, podEnv, api)
+			if envVar.Name == envToLookup {
+				value, err := resolvePlainTextOrSecretEnvValue(ctx, envVar, api)
 				if err != nil {
 					return nil, err
 				}
@@ -176,9 +202,16 @@ func stringifyLines(lines []string) string {
 	return sb.String()
 }
 
-func prepend(prefix string, value string) string {
+func prependString(prefix string, value string) string {
 	if prefix != "" {
 		return prefix + value
+	}
+	return value
+}
+
+func appendString(suffix string, value string) string {
+	if suffix != "" {
+		return value + suffix
 	}
 	return value
 }

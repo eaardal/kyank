@@ -11,23 +11,36 @@ import (
 )
 
 type k8sApi struct {
-	clientset *kubernetes.Clientset
-	namespace string
+	clientset      *kubernetes.Clientset
+	k8sContextName string
+	namespace      string
 }
 
-func newK8sApi(namespace string) *k8sApi {
+func newK8sApi(k8sContextName string, namespace string) *k8sApi {
 	return &k8sApi{
-		namespace: namespace,
+		k8sContextName: k8sContextName,
+		namespace:      namespace,
 	}
 }
 
 func (k *k8sApi) init() error {
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(clientcmd.NewDefaultClientConfigLoadingRules(), nil).ClientConfig()
+	var configOverrides *clientcmd.ConfigOverrides
+
+	if k.k8sContextName != "" {
+		configOverrides = &clientcmd.ConfigOverrides{
+			CurrentContext: k.k8sContextName,
+		}
+	}
+
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	config := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+
+	clientConfig, err := config.ClientConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load Kubernetes config: %v", err)
 	}
 
-	clientset, err := kubernetes.NewForConfig(config)
+	clientset, err := kubernetes.NewForConfig(clientConfig)
 	if err != nil {
 		return fmt.Errorf("failed to initialize Kubernetes clientset: %v", err)
 	}
