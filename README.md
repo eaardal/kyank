@@ -33,8 +33,6 @@ OPTIONS:
    --suffix string                                      This text will be appended to each environment variable line as output. [$KYANK_SUFFIX]
    --separator string, -s string                        The separator text between an environment variable's key and value text. By default '=' is used (KEY=VALUE), but if you want 'KEY: VALUE' or something else instead you can for example specify --separator ': ' (default: =) [$KYANK_SEPARATOR]
    --help, -h                                           show help
-kyank crashed: Required flags "namespace, env" not set
-                                          show help
 ```
 
 ## Example
